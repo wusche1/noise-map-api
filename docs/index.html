@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lärmkarte - Noise Level Lookup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; color: #333; }
+  h1 { margin-bottom: 4px; }
+  .subtitle { color: #666; margin-bottom: 24px; }
+  .tabs { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 2px solid #ddd; }
+  .tab { padding: 10px 20px; cursor: pointer; border: none; background: none; font-size: 15px; color: #666; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+  .tab.active { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  input[type="text"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; }
+  button { padding: 10px 20px; background: #2563eb; color: #fff; border: none; border-radius: 6px; font-size: 15px; cursor: pointer; }
+  button:hover { background: #1d4ed8; }
+  button:disabled { background: #93c5fd; cursor: not-allowed; }
+  .hint { font-size: 13px; color: #888; margin-top: 4px; }
+  .result { margin-top: 20px; }
+  .resolved { color: #666; margin-bottom: 12px; font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #eee; }
+  th { background: #f8f9fa; font-weight: 600; }
+  td:nth-child(2), td:nth-child(3), th:nth-child(2), th:nth-child(3) { text-align: right; }
+  .error { color: #dc2626; margin-top: 12px; }
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #93c5fd; border-top-color: #2563eb; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .upload-area { border: 2px dashed #ccc; border-radius: 8px; padding: 30px; text-align: center; cursor: pointer; margin-bottom: 12px; }
+  .upload-area:hover { border-color: #2563eb; background: #f8faff; }
+  .upload-area input { display: none; }
+  .progress { margin-top: 12px; font-size: 14px; }
+  .progress-bar { width: 100%; height: 6px; background: #eee; border-radius: 3px; margin-top: 6px; }
+  .progress-fill { height: 100%; background: #2563eb; border-radius: 3px; transition: width 0.3s; }
+  .batch-result { margin-top: 16px; }
+  .download-btn { margin-top: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Lärmkarte</h1>
+<p class="subtitle">Noise level lookup for German addresses via <a href="https://gis.uba.de/maps/resources/apps/laermkartierung/index.html">UBA Lärmkartierung</a></p>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('single')">Single Address</button>
+  <button class="tab" onclick="switchTab('batch')">Batch (CSV)</button>
+</div>
+
+<div id="single" class="panel active">
+  <label for="address">Address</label>
+  <input type="text" id="address" placeholder="e.g. Alexanderplatz 1, Berlin" onkeydown="if(event.key==='Enter')lookupSingle()">
+  <p class="hint">Include city name for best results. Use Straße/Str. instead of Strasse.</p>
+  <button onclick="lookupSingle()" id="lookup-btn" style="margin-top:12px">Look up</button>
+  <div id="single-result" class="result"></div>
+</div>
+
+<div id="batch" class="panel">
+  <label>Upload CSV</label>
+  <div class="upload-area" onclick="document.getElementById('csv-file').click()">
+    <input type="file" id="csv-file" accept=".csv,.txt" onchange="handleFile(this)">
+    <p>Click to select a CSV file</p>
+    <p class="hint" style="margin-top:8px">Semicolon or comma separated. Needs a column with addresses.</p>
+  </div>
+  <div id="col-select" style="display:none">
+    <label for="col-picker">Which column contains the addresses?</label>
+    <select id="col-picker" style="padding:8px;border-radius:6px;border:1px solid #ccc;font-size:14px"></select>
+    <button onclick="startBatch()" style="margin-top:12px">Process</button>
+  </div>
+  <div id="batch-progress" class="progress" style="display:none"></div>
+  <div id="batch-result" class="batch-result"></div>
+</div>
+
+<script>
+const BASE = "https://datahub.uba.de/server/rest/services/VeLa/LK/MapServer";
+const LAYERS = {
+  "Road (major roads)": [4110, 4120],
+  "Road (urban)": [4210, 4220],
+  "Rail (major lines)": [5110, 5120],
+  "Rail (urban)": [5210, 5220],
+  "Air (major airports)": [6110, 6120],
+  "Air (urban)": [6210, 6220],
+  "Industry (urban)": [7210, 7220],
+};
+
+function lonLatToMercator(lon, lat) {
+  const x = lon * 20037508.34 / 180;
+  const y = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180);
+  return [x, y * 20037508.34 / 180];
+}
+
+function parseDb(v) {
+  if (!v) return "-";
+  const cleaned = v.replace("Lden", "").replace("Lnight", "");
+  const m = cleaned.match(/(\d{2})(\d{2})/);
+  if (m) return m[1] + "-" + m[2] + " dB(A)";
+  if (v.includes("75")) return ">75 dB(A)";
+  return v;
+}
+
+async function geocode(address) {
+  const r = await fetch("https://nominatim.openstreetmap.org/search?" + new URLSearchParams({
+    q: address, format: "json", countrycodes: "de", limit: "1"
+  }));
+  const data = await r.json();
+  if (!data.length) return null;
+  return { name: data[0].display_name, lon: parseFloat(data[0].lon), lat: parseFloat(data[0].lat) };
+}
+
+async function queryLayer(layerId, x, y) {
+  const r = await fetch(`${BASE}/${layerId}/query?` + new URLSearchParams({
+    geometry: `${x},${y}`, geometryType: "esriGeometryPoint",
+    spatialRel: "esriSpatialRelIntersects", outFields: "Lärmpegelklasse", f: "json"
+  }));
+  const data = await r.json();
+  return data.features?.length ? data.features[0].attributes["Lärmpegelklasse"] : null;
+}
+
+async function lookupAddress(address) {
+  const geo = await geocode(address);
+  if (!geo) return { error: "Address not found" };
+  const [x, y] = lonLatToMercator(geo.lon, geo.lat);
+  const promises = {};
+  for (const [name, [dayId, nightId]] of Object.entries(LAYERS)) {
+    promises[name] = { day: queryLayer(dayId, x, y), night: queryLayer(nightId, x, y) };
+  }
+  const results = {};
+  for (const [name, p] of Object.entries(promises)) {
+    results[name] = { day: parseDb(await p.day), night: parseDb(await p.night) };
+  }
+  return { resolved: geo.name, lat: geo.lat, lon: geo.lon, results };
+}
+
+function renderTable(data) {
+  let html = `<table><tr><th>Source</th><th>Day</th><th>Night</th></tr>`;
+  for (const [name, vals] of Object.entries(data.results)) {
+    html += `<tr><td>${name}</td><td>${vals.day}</td><td>${vals.night}</td></tr>`;
+  }
+  return html + "</table>";
+}
+
+async function lookupSingle() {
+  const addr = document.getElementById("address").value.trim();
+  if (!addr) return;
+  const el = document.getElementById("single-result");
+  const btn = document.getElementById("lookup-btn");
+  btn.disabled = true;
+  el.innerHTML = '<span class="spinner"></span> Looking up...';
+  const data = await lookupAddress(addr);
+  btn.disabled = false;
+  if (data.error) { el.innerHTML = `<p class="error">${data.error}. Check spelling and include the city name.</p>`; return; }
+  el.innerHTML = `<p class="resolved">${data.resolved}</p>` + renderTable(data);
+}
+
+// --- Batch ---
+let csvRows = [], csvHeaders = [], csvDelimiter = ";";
+
+function detectDelimiter(line) {
+  return line.split(";").length > line.split(",").length ? ";" : ",";
+}
+
+function handleFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const lines = e.target.result.split(/\r?\n/).filter(l => l.trim());
+    csvDelimiter = detectDelimiter(lines[0]);
+    csvHeaders = lines[0].split(csvDelimiter).map(h => h.trim().replace(/^["']|["']$/g, ""));
+    csvRows = lines.slice(1).map(l => l.split(csvDelimiter).map(c => c.trim().replace(/^["']|["']$/g, "")));
+
+    const sel = document.getElementById("col-picker");
+    sel.innerHTML = csvHeaders.map((h, i) => `<option value="${i}">${h}</option>`).join("");
+    document.getElementById("col-select").style.display = "block";
+    document.getElementById("batch-result").innerHTML = "";
+    document.getElementById("batch-progress").style.display = "none";
+  };
+  reader.readAsText(file);
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function startBatch() {
+  const colIdx = parseInt(document.getElementById("col-picker").value);
+  const progEl = document.getElementById("batch-progress");
+  const resultEl = document.getElementById("batch-result");
+  progEl.style.display = "block";
+  resultEl.innerHTML = "";
+
+  const noiseNames = Object.keys(LAYERS);
+  const outHeaders = ["address_input", "address_resolved", "lat", "lon",
+    ...noiseNames.flatMap(n => [`${n} (day)`, `${n} (night)`])];
+  const outRows = [];
+
+  for (let i = 0; i < csvRows.length; i++) {
+    const addr = csvRows[i][colIdx];
+    if (!addr) continue;
+    progEl.innerHTML = `<span class="spinner"></span> Processing ${i + 1} / ${csvRows.length}: ${addr}
+      <div class="progress-bar"><div class="progress-fill" style="width:${((i + 1) / csvRows.length * 100)}%"></div></div>`;
+
+    const data = await lookupAddress(addr);
+    const row = [addr, data.resolved || "", data.lat || "", data.lon || ""];
+    for (const name of noiseNames) {
+      row.push(data.results?.[name]?.day || "");
+      row.push(data.results?.[name]?.night || "");
+    }
+    outRows.push(row);
+
+    if (i < csvRows.length - 1) await sleep(1100);
+  }
+
+  progEl.innerHTML = `Done! Processed ${outRows.length} addresses.`;
+
+  const csvContent = [outHeaders, ...outRows].map(r => r.join(";")).join("\n");
+  const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+
+  resultEl.innerHTML = `
+    <table><tr>${outHeaders.slice(0, 6).map(h => `<th>${h}</th>`).join("")}<th>...</th></tr>
+    ${outRows.slice(0, 5).map(r => `<tr>${r.slice(0, 6).map(c => `<td>${c}</td>`).join("")}<td>...</td></tr>`).join("")}
+    ${outRows.length > 5 ? `<tr><td colspan="7" style="text-align:center;color:#888">${outRows.length - 5} more rows...</td></tr>` : ""}
+    </table>
+    <a href="${url}" download="noise_levels.csv"><button class="download-btn">Download CSV</button></a>`;
+}
+
+function switchTab(id) {
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+  document.querySelector(`.tab[onclick*="${id}"]`).classList.add("active");
+}
+</script>
+</body>
+</html>
