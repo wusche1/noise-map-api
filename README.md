@@ -4,7 +4,15 @@ CLI tool to query noise levels for any German address from the [UBA Lärmkartier
 
 Returns day (Lden) and night (Lnight) noise levels across road, rail, air, and industrial sources.
 
-## Prerequisites
+## Web UI
+
+No install needed — use the web version at **https://wusche1.github.io/noise-map-api/**
+
+Supports single address lookups and CSV batch processing directly in the browser.
+
+## CLI
+
+### Prerequisites
 
 - Python 3.9+
 - [Poetry](https://python-poetry.org/docs/#installation)

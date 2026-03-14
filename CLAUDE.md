@@ -1,12 +1,11 @@
 # noise-map
 
-CLI tool that queries noise levels for German addresses from the UBA Lärmkartierung ArcGIS MapServer.
+Queries noise levels for German addresses from the UBA Lärmkartierung ArcGIS MapServer. Has both a CLI tool and a static web UI (GitHub Pages).
 
 ## Running
 
 ```bash
-source .venv/bin/activate
-python -m noise_map.cli "Alexanderplatz 1, Berlin"
+poetry run python -m noise_map.cli "Alexanderplatz 1, Berlin"
 ```
 
 ## Tests
@@ -22,6 +21,7 @@ pytest tests/
 - `noise_map/parse.py` — parse raw noise level strings (e.g. "Lden5559" → "55-59 dB(A)")
 - `noise_map/lookup.py` — core lookup function: address → dict of all noise levels
 - `noise_map/cli.py` — CLI entrypoint (single + batch CSV mode)
+- `docs/index.html` — static web UI (GitHub Pages), same logic reimplemented in JS
 
 ## Key details
 
