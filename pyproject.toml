@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "noise-map-api"
+version = "0.1.0"
+description = "CLI tool to query noise levels for German addresses from the UBA Lärmkartierung"
+authors = [""]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.9"
+requests = "^2.32"
+geopy = "^2.4"
+pyproj = "^3.6"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+
+[tool.poetry.scripts]
+noise-map = "noise_map.cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
