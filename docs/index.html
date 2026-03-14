@@ -37,6 +37,13 @@
   .progress-fill { height: 100%; background: #2563eb; border-radius: 3px; transition: width 0.3s; }
   .batch-result { margin-top: 16px; }
   .download-btn { margin-top: 12px; }
+  .copy-btn { padding: 6px 14px; font-size: 13px; background: #f3f4f6; color: #333; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; }
+  .copy-btn:hover { background: #e5e7eb; }
+  .copy-btn.copied { background: #dcfce7; border-color: #86efac; color: #166534; }
+  .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .table-scroll { overflow-x: auto; max-width: 100%; }
+  .table-scroll table { min-width: 600px; }
+  .batch-actions { display: flex; gap: 8px; margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -134,11 +141,14 @@ async function lookupAddress(address) {
 }
 
 function renderTable(data) {
-  let html = `<table><tr><th>Source</th><th>Day</th><th>Night</th></tr>`;
+  let tsv = "Source\tDay\tNight\n";
+  let html = `<table id="single-table"><tr><th>Source</th><th>Day</th><th>Night</th></tr>`;
   for (const [name, vals] of Object.entries(data.results)) {
     html += `<tr><td>${name}</td><td>${vals.day}</td><td>${vals.night}</td></tr>`;
+    tsv += `${name}\t${vals.day}\t${vals.night}\n`;
   }
-  return html + "</table>";
+  html += "</table>";
+  return `<div class="result-header"><span></span><button class="copy-btn" onclick="copyText(this, \`${tsv.replace(/`/g,"\\`")}\`)">Copy table</button></div>` + html;
 }
 
 async function lookupSingle() {
@@ -217,12 +227,27 @@ async function startBatch() {
   const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
 
+  const tsvContent = [outHeaders, ...outRows].map(r => r.join("\t")).join("\n");
+
   resultEl.innerHTML = `
-    <table><tr>${outHeaders.slice(0, 6).map(h => `<th>${h}</th>`).join("")}<th>...</th></tr>
-    ${outRows.slice(0, 5).map(r => `<tr>${r.slice(0, 6).map(c => `<td>${c}</td>`).join("")}<td>...</td></tr>`).join("")}
-    ${outRows.length > 5 ? `<tr><td colspan="7" style="text-align:center;color:#888">${outRows.length - 5} more rows...</td></tr>` : ""}
+    <div class="table-scroll">
+    <table>${"<tr>" + outHeaders.map(h => `<th>${h}</th>`).join("") + "</tr>"}
+    ${outRows.map(r => "<tr>" + r.map(c => `<td>${c}</td>`).join("") + "</tr>").join("")}
     </table>
-    <a href="${url}" download="noise_levels.csv"><button class="download-btn">Download CSV</button></a>`;
+    </div>
+    <div class="batch-actions">
+      <a href="${url}" download="noise_levels.csv"><button class="download-btn">Download CSV</button></a>
+      <button class="copy-btn" onclick="copyText(this, batchTsv)">Copy table</button>
+    </div>`;
+  window.batchTsv = tsvContent;
+}
+
+function copyText(btn, text) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = "Copied!";
+    btn.classList.add("copied");
+    setTimeout(() => { btn.textContent = "Copy table"; btn.classList.remove("copied"); }, 2000);
+  });
 }
 
 function switchTab(id) {
